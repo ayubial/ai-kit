@@ -55,6 +55,23 @@ Installs only the AI agents/commands into the current project:
 npx github:ayubial/ai-kit
 ```
 
+### Option C: Install for only one assistant (Claude Code OR Antigravity)
+By default, `ai-kit` sets up **both** Claude Code and Antigravity. Use `--target` if you only use one:
+
+```bash
+# Antigravity only (project agents + skills)
+npx github:ayubial/ai-kit --target antigravity
+
+# Antigravity only (with MCP + Figma)
+npx github:ayubial/ai-kit --target antigravity --figma-key YOUR_FIGMA_KEY
+
+# Claude Code only (project agents + commands)
+npx github:ayubial/ai-kit --target claude
+
+# Claude Code only (with MCP + Figma)
+npx github:ayubial/ai-kit --target claude --figma-key YOUR_FIGMA_KEY
+```
+
 ### Want to preview first without changing anything?
 ```bash
 npx github:ayubial/ai-kit --dry-run
