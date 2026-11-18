@@ -9,8 +9,8 @@ Welcome! This guide sets up your AI coding assistant so it writes code that actu
 2. **Your AI Team (installed inside each project repo):**
    - **Grill-Me (`/grill-me`):** Asks you clarifying questions *before* coding so the AI doesn't build the wrong thing.
    - **Architect (`architect`):** Reads the repo rules, plans small slices, and checks the final code.
-   - **Coder (`coder`):** Writes the actual code and runs the project's type-checks, lint, and unit/integration tests.
-   - **Tester (`tester`):** Writes and runs **Playwright E2E tests** (`.spec.ts`) for web/UI flows (optional for backend/CLI repos).
+   - **Coder (`coder`):** Writes the actual code (and unit/integration tests if requested) and runs the project's type-checks, lint, and tests.
+   - **Tester (`tester`):** Writes and runs **Playwright E2E tests** (`.spec.ts`) for web/UI flows (optional for backend/CLI repos; for unit tests, delegate to `coder`).
    - **Retro (`/retro`):** Saves lessons learned so the AI doesn't repeat the same mistake twice.
 
 > **Language support:** `grill-me`, `architect`, `coder`, and `retro` are **programming-language agnostic** — they inspect your repo's `AGENTS.md` / `CLAUDE.md` and manifests (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, etc.) and run whatever test/check commands your project uses. Only `tester` (Playwright E2E) and the optional MCPs are web/UI-specific.
