@@ -1,0 +1,19 @@
+{
+  "name": "ai-kit",
+  "version": "1.0.0",
+  "description": "Team AI workflow setup (Grill-Me, Architect, Coder, Tester, Retro) + MCP for Claude Code and Antigravity CLI",
+  "type": "module",
+  "bin": {
+    "ai-kit": "./bin/cli.mjs"
+  },
+  "files": [
+    "bin/"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ayubial/ai-kit.git"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
