@@ -516,6 +516,22 @@ ${RETRO_BODY}`);
 
 function installOpencodeAgents() {
   const base = ".opencode";
+  writeTemplate("opencode.json", JSON.stringify({
+    $schema: "https://opencode.ai/config.json",
+    agents: {
+      build: {
+        permissions: [
+          { action: "subagent", resource: "*", effect: "allow" },
+        ],
+      },
+      architect: {
+        permissions: [
+          { action: "subagent", resource: "*", effect: "allow" },
+        ],
+      },
+    },
+  }, null, 2) + "\n");
+
   writeTemplate(`${base}/agents/architect.md`, `---
 description: High-level system architect. Inspects repo guidelines, designs vertical-slice contracts, delegates coding to coder and E2E to tester, and verifies via git diff and checks.
 mode: primary
