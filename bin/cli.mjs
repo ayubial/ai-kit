@@ -6,8 +6,10 @@ import { execFileSync } from "node:child_process";
 
 const args = process.argv.slice(2);
 
+const VALID_TARGETS = ["claude", "antigravity", "codex", "copilot", "opencode"];
+
 const opts = {
-  target: "all", // claude | antigravity | all
+  target: "all", // claude | antigravity | codex | copilot | opencode | all (or comma-separated)
   dir: ".",
   figmaKey: "",
   runMcp: false,
@@ -18,21 +20,22 @@ const opts = {
 
 function printHelp() {
   console.log(`
-ai-kit — Team AI Workflow & MCP Setup (Claude Code + Antigravity CLI)
+ai-kit — Team AI Workflow & MCP Setup (Claude Code, Antigravity, Codex, Copilot, OpenCode)
 
 Usage:
   npx github:ayubial/ai-kit [options]
 
 Options:
-  --target <claude|antigravity|all>  Assistant to configure (default: all)
-  --dir <path>                       Target project directory (default: .)
-  --figma-key <key>                  Figma token (enables Playwright + Figma MCP)
-  --mcp                              Also configure MCP servers (Playwright, + Figma if key given)
-  --mcp-only                         Only configure MCP servers (skip project files)
-  --agents-only                      Only install project agents/skills (skip MCP)
-  --force                            Overwrite existing files and replace MCP servers
-  --dry-run                          Preview changes without writing files
-  -h, --help                         Show this help message
+  --target <targets>  Assistant(s) to configure: claude, antigravity, codex, copilot, opencode, or all (default: all)
+                      Supports comma-separated values (e.g. --target codex,copilot)
+  --dir <path>        Target project directory (default: .)
+  --figma-key <key>   Figma token (enables Playwright + Figma MCP)
+  --mcp               Also configure MCP servers (Playwright, + Figma if key given)
+  --mcp-only          Only configure MCP servers (skip project files)
+  --agents-only       Only install project agents/skills (skip MCP)
+  --force             Overwrite existing files and replace MCP servers
+  --dry-run           Preview changes without writing files
+  -h, --help          Show this help message
 
 Examples:
   # Install project agents + skills in current repo
@@ -77,10 +80,23 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-if (!["claude", "antigravity", "all"].includes(opts.target)) {
-  console.error(`Invalid --target "${opts.target}". Use claude, antigravity, or all.`);
-  process.exit(1);
+function parseTargets(targetArg) {
+  if (targetArg === "all") return [...VALID_TARGETS];
+  const parts = targetArg
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (parts.length === 0 || parts.some((p) => !VALID_TARGETS.includes(p))) {
+    console.error(
+      `Invalid --target "${targetArg}". Use claude, antigravity, codex, copilot, opencode, or all.`
+    );
+    process.exit(1);
+  }
+  return [...new Set(parts)];
 }
+
+const selectedTargets = parseTargets(opts.target);
+const hasTarget = (name) => selectedTargets.includes(name);
 
 const projectDir = path.resolve(opts.dir);
 if (opts.runAgents && !fs.existsSync(projectDir)) {
@@ -113,29 +129,29 @@ function commandExists(cmd) {
   }
 }
 
-function setupMcpClaude() {
-  if (!commandExists("claude")) {
-    console.log("Claude Code CLI ('claude') not found — skipping Claude MCP.");
+function setupMcpViaCli({ label, cmd, removeArgs, addPrefixArgs }) {
+  if (!commandExists(cmd)) {
+    console.log(`${label} CLI ('${cmd}') not found — skipping ${label} MCP.`);
     return;
   }
   const addServer = (name, cmdArgs) => {
     let exists = false;
     try {
-      execFileSync("claude", ["mcp", "get", name], { stdio: "ignore" });
+      execFileSync(cmd, ["mcp", "get", name], { stdio: "ignore" });
       exists = true;
     } catch {}
     if (exists && !opts.force) {
-      console.log(`Claude MCP: ${name} already installed, skipped`);
+      console.log(`${label} MCP: ${name} already installed, skipped`);
       return;
     }
     if (opts.dryRun) {
-      console.log(`[dry-run] Would configure Claude MCP: ${name}`);
+      console.log(`[dry-run] Would configure ${label} MCP: ${name}`);
       return;
     }
     try {
-      execFileSync("claude", ["mcp", "remove", "-s", "user", name], { stdio: "ignore" });
+      execFileSync(cmd, [...removeArgs, name], { stdio: "ignore" });
     } catch {}
-    execFileSync("claude", ["mcp", "add", "-s", "user", name, "--", ...cmdArgs], { stdio: "inherit" });
+    execFileSync(cmd, [...addPrefixArgs, name, "--", ...cmdArgs], { stdio: "inherit" });
   };
 
   addServer("playwright", ["npx", "-y", "@playwright/mcp@latest"]);
@@ -148,39 +164,34 @@ function setupMcpClaude() {
       "--stdio",
     ]);
   } else {
-    console.log("Claude MCP: figma-free-context skipped (pass --figma-key to enable)");
+    console.log(`${label} MCP: figma-free-context skipped (pass --figma-key to enable)`);
   }
 }
 
-function setupMcpAntigravity() {
-  const cfgPath = path.join(os.homedir(), ".gemini", "config", "mcp_config.json");
+function setupMcpJsonConfig({ label, cfgPath, rootKey = "mcpServers", buildServer }) {
   const data = fs.existsSync(cfgPath) ? JSON.parse(fs.readFileSync(cfgPath, "utf8")) : {};
-  data.mcpServers = data.mcpServers || {};
+  data[rootKey] = data[rootKey] || {};
 
   const want = {
-    playwright: {
-      command: "npx",
-      args: ["-y", "@playwright/mcp@latest"],
-      disabled: false,
-    },
+    playwright: buildServer(["npx", "-y", "@playwright/mcp@latest"], true),
   };
   if (opts.figmaKey) {
-    want["figma-free-context"] = {
-      command: "npx",
-      args: ["-y", "figma-developer-mcp", `--figma-api-key=${opts.figmaKey}`, "--stdio"],
-    };
+    want["figma-free-context"] = buildServer(
+      ["npx", "-y", "figma-developer-mcp", `--figma-api-key=${opts.figmaKey}`, "--stdio"],
+      false
+    );
   } else {
-    console.log("Antigravity MCP: figma-free-context skipped (pass --figma-key to enable)");
+    console.log(`${label} MCP: figma-free-context skipped (pass --figma-key to enable)`);
   }
 
   for (const [name, conf] of Object.entries(want)) {
-    if (name in data.mcpServers && !opts.force) {
-      console.log(`Antigravity MCP: ${name} already installed, skipped`);
+    if (name in data[rootKey] && !opts.force) {
+      console.log(`${label} MCP: ${name} already installed, skipped`);
     } else if (opts.dryRun) {
-      console.log(`[dry-run] Would configure Antigravity MCP: ${name}`);
+      console.log(`[dry-run] Would configure ${label} MCP: ${name}`);
     } else {
-      data.mcpServers[name] = conf;
-      console.log(`Antigravity MCP: configured ${name}`);
+      data[rootKey][name] = conf;
+      console.log(`${label} MCP: configured ${name}`);
     }
   }
 
@@ -188,8 +199,64 @@ function setupMcpAntigravity() {
     fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
     fs.writeFileSync(cfgPath, JSON.stringify(data, null, 2), "utf8");
     if (process.platform !== "win32") fs.chmodSync(cfgPath, 0o600);
-    console.log(`Antigravity MCP saved: ${cfgPath}`);
+    console.log(`${label} MCP saved: ${cfgPath}`);
   }
+}
+
+function setupMcpClaude() {
+  setupMcpViaCli({
+    label: "Claude",
+    cmd: "claude",
+    removeArgs: ["mcp", "remove", "-s", "user"],
+    addPrefixArgs: ["mcp", "add", "-s", "user"],
+  });
+}
+
+function setupMcpCodex() {
+  setupMcpViaCli({
+    label: "Codex",
+    cmd: "codex",
+    removeArgs: ["mcp", "remove"],
+    addPrefixArgs: ["mcp", "add"],
+  });
+}
+
+function setupMcpAntigravity() {
+  setupMcpJsonConfig({
+    label: "Antigravity",
+    cfgPath: path.join(os.homedir(), ".gemini", "config", "mcp_config.json"),
+    buildServer: ([command, ...args], isPlaywright) => ({
+      command,
+      args,
+      ...(isPlaywright ? { disabled: false } : {}),
+    }),
+  });
+}
+
+function setupMcpCopilot() {
+  setupMcpJsonConfig({
+    label: "Copilot",
+    cfgPath: path.join(os.homedir(), ".copilot", "mcp-config.json"),
+    buildServer: ([command, ...args]) => ({
+      type: "local",
+      command,
+      args,
+      tools: ["*"],
+    }),
+  });
+}
+
+function setupMcpOpencode() {
+  setupMcpJsonConfig({
+    label: "OpenCode",
+    cfgPath: path.join(os.homedir(), ".config", "opencode", "opencode.json"),
+    rootKey: "mcp",
+    buildServer: (command) => ({
+      type: "local",
+      command,
+      enabled: true,
+    }),
+  });
 }
 
 // ============================================================================
@@ -203,7 +270,7 @@ You are the Lead Software Architect. Your role is to align on requirements, desi
 
 ## Core Directives
 
-1. **Mandatory Project Discovery:** Before planning, inspect repository guidelines (\`AGENTS.md\`, \`CLAUDE.md\`, \`README.md\`) and manifests (\`package.json\`, \`tsconfig.json\`, \`pyproject.toml\`, etc.). If a spec file exists (e.g. \`.agents/specs/<feature>.md\`), read it first.
+1. **Mandatory Project Discovery:** Before planning, inspect repository guidelines (\`AGENTS.md\`, \`CLAUDE.md\`, \`.github/copilot-instructions.md\`, \`README.md\`) and manifests (\`package.json\`, \`tsconfig.json\`, \`pyproject.toml\`, etc.). If a spec file exists (e.g. \`.agents/specs/<feature>.md\`), read it first.
 2. **Vertical Slicing (Stay in the Smart Zone):** For medium/large features, break work into small, independent vertical slices (UI + state/API + verification per slice) rather than one giant pass.
 3. **No Direct Code Editing:** Do not edit application files directly. Write specs/contracts and delegate. Use terminal commands only for read-only discovery (\`rg\`, \`git diff\`, \`git status\`) and verification (type-check, lint, test, build).
 4. **Draft the Implementation Contract:** When delegating to \`coder\`, specify:
@@ -228,7 +295,7 @@ You are a precision Software Engineer. Implement features, refactors, state logi
 
 ## Core Directives
 
-1. **Source of Truth:** Inspect \`AGENTS.md\`, \`CLAUDE.md\`, and nearby files before writing code so changes match local tech stack, architecture, naming, and style conventions.
+1. **Source of Truth:** Inspect \`AGENTS.md\`, \`CLAUDE.md\`, \`.github/copilot-instructions.md\`, and nearby files before writing code so changes match local tech stack, architecture, naming, and style conventions.
 2. **Respect Boundaries:** Follow the architect's contract and existing module/package boundaries. Do not invent unrequested abstractions or add unapproved dependencies.
 3. **Scope Control:** Modify only the files required by the contract. Keep changes clean and free of placeholders.
 4. **Mandatory Verification:** Run the verification commands specified by the architect (type-check, lint, unit tests) before concluding.
@@ -272,7 +339,7 @@ Do NOT write application code yet. Your job is to interview the user relentlessl
 
 ## Process
 
-1. Read \`AGENTS.md\` / \`CLAUDE.md\` and inspect the target area briefly to understand existing patterns.
+1. Read \`AGENTS.md\` / \`CLAUDE.md\` / \`.github/copilot-instructions.md\` and inspect the target area briefly to understand existing patterns.
 2. Ask focused questions (in batches of 3–5, numbered) covering:
    - Exact user flow and acceptance criteria
    - Edge cases (empty, loading, error, unauthorized, mobile vs desktop)
@@ -300,6 +367,27 @@ Review the current session's changes (\`git diff\`, \`git status\`) and any bugs
 // ============================================================================
 // Installers
 // ============================================================================
+
+function installSkillsAt(skillsBaseDir, architectInstructionsHint) {
+  writeTemplate(`${skillsBaseDir}/grill-me/SKILL.md`, `---
+name: grill-me
+description: Interview the developer before coding to resolve edge cases and produce a vertical-slice spec in .agents/specs/.
+---
+${GRILL_ME_BODY}`);
+
+  writeTemplate(`${skillsBaseDir}/architect-workflow/SKILL.md`, `---
+name: architect-workflow
+description: Run the architect workflow (inspect repo guidelines -> delegate vertical slice to coder -> verify git diff & checks -> optional tester E2E).
+---
+${architectInstructionsHint}
+`);
+
+  writeTemplate(`${skillsBaseDir}/retro/SKILL.md`, `---
+name: retro
+description: Run a quick post-task retrospective and update AGENTS.md or docs/agents/ with repeatable lessons.
+---
+${RETRO_BODY}`);
+}
 
 function installAntigravityAgents() {
   const base = ".agents";
@@ -342,25 +430,137 @@ tools:
   - send_message
 ---
 ${TESTER_BODY}`);
+}
 
-  writeTemplate(`${base}/skills/grill-me/SKILL.md`, `---
-name: grill-me
-description: Interview the developer before coding to resolve edge cases and produce a vertical-slice spec in .agents/specs/.
+function installCodexAgents() {
+  const base = ".codex";
+  const tomlLiteral = (text) => `'''\n${text.trim()}\n'''`;
+
+  writeTemplate(`${base}/config.toml`, `# Codex CLI project-local subagent configuration (ai-kit)
+
+[agents.architect]
+description = "High-level system architect. Inspects repo guidelines, designs vertical-slice contracts, delegates coding to coder and E2E to tester, and verifies via git diff and checks."
+model_reasoning_effort = "high"
+config_file = "agents/architect.toml"
+
+[agents.coder]
+description = "Precision implementation engineer. Implements architect contracts matching repo conventions and returns a compact file + verification summary."
+model_reasoning_effort = "low"
+config_file = "agents/coder.toml"
+
+[agents.tester]
+description = "Specialized E2E tester. Writes and runs deterministic Playwright specs with strict token/retry budgets."
+model_reasoning_effort = "low"
+config_file = "agents/tester.toml"
+`);
+
+  writeTemplate(`${base}/agents/architect.toml`, `name = "architect"
+description = "High-level system architect. Inspects repo guidelines, designs vertical-slice contracts, delegates coding to coder and E2E to tester, and verifies via git diff and checks."
+sandbox_mode = "read-only"
+developer_instructions = ${tomlLiteral(ARCHITECT_BODY)}
+`);
+
+  writeTemplate(`${base}/agents/coder.toml`, `name = "coder"
+description = "Precision implementation engineer. Implements architect contracts matching repo conventions and returns a compact file + verification summary."
+sandbox_mode = "workspace-write"
+developer_instructions = ${tomlLiteral(CODER_BODY)}
+`);
+
+  writeTemplate(`${base}/agents/tester.toml`, `name = "tester"
+description = "Specialized E2E tester. Writes and runs deterministic Playwright specs with strict token/retry budgets."
+sandbox_mode = "workspace-write"
+developer_instructions = ${tomlLiteral(TESTER_BODY)}
+`);
+}
+
+function installCopilotAgents() {
+  const base = ".github";
+  writeTemplate(`${base}/agents/architect.agent.md`, `---
+name: architect
+description: High-level system architect. Inspects repo guidelines, designs vertical-slice contracts, delegates coding to coder and E2E to tester, and verifies via git diff and checks.
+---
+${ARCHITECT_BODY}`);
+
+  writeTemplate(`${base}/agents/coder.agent.md`, `---
+name: coder
+description: Precision implementation engineer. Implements architect contracts matching repo conventions and returns a compact file + verification summary.
+---
+${CODER_BODY}`);
+
+  writeTemplate(`${base}/agents/tester.agent.md`, `---
+name: tester
+description: Specialized E2E tester. Writes and runs deterministic Playwright specs with strict token/retry budgets.
+---
+${TESTER_BODY}`);
+
+  writeTemplate(`${base}/prompts/grill-me.prompt.md`, `---
+description: Interview me on requirements and edge cases before coding, then write a vertical-slice spec
 ---
 ${GRILL_ME_BODY}`);
 
-  writeTemplate(`${base}/skills/architect-workflow/SKILL.md`, `---
-name: architect-workflow
-description: Run the architect workflow (inspect repo guidelines -> delegate vertical slice to coder -> verify git diff & checks -> optional tester E2E).
+  writeTemplate(`${base}/prompts/architect.prompt.md`, `---
+description: Run the architect workflow (plan -> delegate to coder -> verify) in the main session
 ---
-Follow \`.agents/agents/architect/agent.md\` as your instructions for this task.
-`);
+Follow \`.github/agents/architect.agent.md\` as your instructions for this task (read it first). Do not edit application files yourself — delegate implementation to \`coder\` (and \`tester\` when requested) and verify via \`git diff\` and project checks.`);
 
-  writeTemplate(`${base}/skills/retro/SKILL.md`, `---
-name: retro
-description: Run a quick post-task retrospective and update AGENTS.md or docs/agents/ with repeatable lessons.
+  writeTemplate(`${base}/prompts/retro.prompt.md`, `---
+description: Capture repeatable lessons from this task into AGENTS.md or docs/agents/
 ---
 ${RETRO_BODY}`);
+
+  installSkillsAt(
+    `${base}/skills`,
+    "Follow `.github/agents/architect.agent.md` as your instructions for this task."
+  );
+}
+
+function installOpencodeAgents() {
+  const base = ".opencode";
+  writeTemplate(`${base}/agents/architect.md`, `---
+description: High-level system architect. Inspects repo guidelines, designs vertical-slice contracts, delegates coding to coder and E2E to tester, and verifies via git diff and checks.
+mode: primary
+permission:
+  edit: deny
+---
+${ARCHITECT_BODY}`);
+
+  writeTemplate(`${base}/agents/coder.md`, `---
+description: Precision implementation engineer. Implements architect contracts matching repo conventions and returns a compact file + verification summary.
+mode: subagent
+---
+${CODER_BODY}`);
+
+  writeTemplate(`${base}/agents/tester.md`, `---
+description: Specialized E2E tester. Writes and runs deterministic Playwright specs with strict token/retry budgets.
+mode: subagent
+---
+${TESTER_BODY}`);
+
+  writeTemplate(`${base}/commands/grill-me.md`, `---
+description: Interview me on requirements and edge cases before coding, then write a vertical-slice spec
+---
+${GRILL_ME_BODY}
+
+Topic:
+$ARGUMENTS`);
+
+  writeTemplate(`${base}/commands/architect.md`, `---
+description: Run the architect workflow (plan -> delegate to coder -> verify) in the main session
+---
+Follow \`.opencode/agents/architect.md\` as your instructions for this task (read it first). Do not edit application files yourself — delegate implementation to \`coder\` (and \`tester\` when requested) and verify via \`git diff\` and project checks.
+
+Task:
+$ARGUMENTS`);
+
+  writeTemplate(`${base}/commands/retro.md`, `---
+description: Capture repeatable lessons from this task into AGENTS.md or docs/agents/
+---
+${RETRO_BODY}`);
+
+  installSkillsAt(
+    `${base}/skills`,
+    "Follow `.opencode/agents/architect.md` as your instructions for this task."
+  );
 }
 
 function installClaudeAgents() {
@@ -427,16 +627,30 @@ ${RETRO_BODY}`);
 // ============================================================================
 
 if (opts.runMcp) {
-  if (opts.target === "claude" || opts.target === "all") setupMcpClaude();
-  if (opts.target === "antigravity" || opts.target === "all") setupMcpAntigravity();
+  if (hasTarget("claude")) setupMcpClaude();
+  if (hasTarget("antigravity")) setupMcpAntigravity();
+  if (hasTarget("codex")) setupMcpCodex();
+  if (hasTarget("copilot")) setupMcpCopilot();
+  if (hasTarget("opencode")) setupMcpOpencode();
 }
 
 if (opts.runAgents) {
-  if (opts.target === "antigravity" || opts.target === "all") installAntigravityAgents();
-  if (opts.target === "claude" || opts.target === "all") installClaudeAgents();
+  if (hasTarget("antigravity")) installAntigravityAgents();
+  if (hasTarget("codex")) installCodexAgents();
+  if (hasTarget("antigravity") || hasTarget("codex")) {
+    installSkillsAt(
+      ".agents/skills",
+      "Follow `.agents/agents/architect/agent.md` (Antigravity) or `.codex/agents/architect.toml` (Codex) as your instructions for this task."
+    );
+  }
+  if (hasTarget("claude")) installClaudeAgents();
+  if (hasTarget("copilot")) installCopilotAgents();
+  if (hasTarget("opencode")) installOpencodeAgents();
 }
 
 console.log("\nDone.");
 if (opts.runMcp && !opts.dryRun) {
-  console.log("Restart your AI assistant, then verify MCP with: claude mcp list (Claude) or /mcp (Antigravity).");
+  console.log(
+    "Restart your AI assistant, then verify MCP with: claude mcp list (Claude), /mcp (Antigravity/Copilot), codex mcp list (Codex), or opencode mcp list (OpenCode)."
+  );
 }

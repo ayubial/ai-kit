@@ -1,6 +1,13 @@
-# Team AI Coding Setup & Workflow Guide (Claude Code + Antigravity CLI)
+# Team AI Coding Setup & Workflow Guide (Claude Code, Antigravity, Codex, Copilot, OpenCode)
 
 Welcome! This guide sets up your AI coding assistant so it writes code that actually matches our codebase, tests its own work, and doesn't waste time guessing.
+
+### Supported Harnesses
+- **Claude Code** (`.claude/agents/`, `.claude/commands/`)
+- **Antigravity CLI** (`.agents/agents/`, `.agents/skills/`)
+- **OpenAI Codex CLI** (`.codex/config.toml`, `.codex/agents/`, `.agents/skills/`)
+- **GitHub Copilot** (`.github/agents/*.agent.md`, `.github/prompts/*.prompt.md`, `.github/skills/`)
+- **OpenCode** (`.opencode/agents/`, `.opencode/commands/`, `.opencode/skills/`)
 
 ### What You Get
 1. **Browser & Design Tools (MCPs — installed once on your laptop):**
@@ -13,7 +20,7 @@ Welcome! This guide sets up your AI coding assistant so it writes code that actu
    - **Tester (`tester`):** Writes and runs **Playwright E2E tests** (`.spec.ts`) for web/UI flows (optional for backend/CLI repos; for unit tests, delegate to `coder`).
    - **Retro (`/retro`):** Saves lessons learned so the AI doesn't repeat the same mistake twice.
 
-> **Language support:** `grill-me`, `architect`, `coder`, and `retro` are **programming-language agnostic** — they inspect your repo's `AGENTS.md` / `CLAUDE.md` and manifests (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, etc.) and run whatever test/check commands your project uses. Only `tester` (Playwright E2E) and the optional MCPs are web/UI-specific.
+> **Language support:** `grill-me`, `architect`, `coder`, and `retro` are **programming-language agnostic** — they inspect your repo's `AGENTS.md` / `CLAUDE.md` / `.github/copilot-instructions.md` and manifests (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, etc.) and run whatever test/check commands your project uses. Only `tester` (Playwright E2E) and the optional MCPs are web/UI-specific.
 
 ---
 
@@ -28,8 +35,11 @@ node -v
 *(If it's below `v20`, install Node 20+ via `nvm` or the Node.js website.)*
 
 Make sure you also have at least one assistant installed:
-- **Claude Code** (`claude --version`), or
-- **Antigravity CLI** (`agy --version`)
+- **Claude Code** (`claude --version`),
+- **Antigravity CLI** (`agy --version`),
+- **OpenAI Codex CLI** (`codex --version`),
+- **GitHub Copilot** (`copilot --version` or VS Code Copilot), or
+- **OpenCode** (`opencode --version`)
 
 ### Optional: Get a Figma Token (only if you build UI from Figma links)
 1. Open Figma → **Settings** → **Security** → **Personal access tokens**.
@@ -57,21 +67,27 @@ Installs only the AI agents/commands into the current project:
 npx github:ayubial/ai-kit
 ```
 
-### Option C: Install for only one assistant (Claude Code OR Antigravity)
-By default, `ai-kit` sets up **both** Claude Code and Antigravity. Use `--target` if you only use one:
+### Option C: Install for specific assistant(s)
+By default, `ai-kit` sets up **all** supported assistants (`claude`, `antigravity`, `codex`, `copilot`, `opencode`). Use `--target` to pick one or a comma-separated list:
 
 ```bash
 # Antigravity only (project agents + skills)
 npx github:ayubial/ai-kit --target antigravity
 
-# Antigravity only (with MCP + Figma)
-npx github:ayubial/ai-kit --target antigravity --figma-key YOUR_FIGMA_KEY
-
-# Claude Code only (project agents + commands)
-npx github:ayubial/ai-kit --target claude
-
 # Claude Code only (with MCP + Figma)
 npx github:ayubial/ai-kit --target claude --figma-key YOUR_FIGMA_KEY
+
+# Codex CLI only (project agents + skills)
+npx github:ayubial/ai-kit --target codex
+
+# GitHub Copilot only (agents + prompts + skills)
+npx github:ayubial/ai-kit --target copilot
+
+# OpenCode only (agents + commands + skills)
+npx github:ayubial/ai-kit --target opencode
+
+# Multiple targets together
+npx github:ayubial/ai-kit --target codex,copilot,opencode --mcp
 ```
 
 ### Want to preview first without changing anything?
@@ -93,9 +109,15 @@ npx github:ayubial/ai-kit --force
 2. **Check MCP tools:**
    - **Claude Code:** run `claude mcp list` → you should see `playwright` (and `figma-free-context` if you added a key).
    - **Antigravity:** type `/mcp` → you should see `playwright` (and `figma-free-context`).
+   - **Codex CLI:** run `codex mcp list` (or `/mcp` inside a session) → you should see `playwright` (and `figma-free-context`).
+   - **GitHub Copilot:** type `/mcp` in Copilot CLI (or check `~/.copilot/mcp-config.json`) → you should see `playwright` (and `figma-free-context`).
+   - **OpenCode:** run `opencode mcp list` (or check `~/.config/opencode/opencode.json`) → you should see `playwright` (and `figma-free-context`).
 3. **Check Agents:**
    - **Claude Code:** type `/architect` or `/grill-me` inside a session.
    - **Antigravity:** type `@architect`, `@coder`, `@tester`, or `/grill-me`.
+   - **Codex CLI:** reference `@architect` / `@coder` / `@tester` or invoke skills (`$grill-me`, `$architect-workflow`, `$retro`).
+   - **GitHub Copilot:** use `/agent` (or `@architect`, `@coder`, `@tester`) and `/grill-me` / `/architect` / `/retro`.
+   - **OpenCode:** use `@architect` / `@coder` / `@tester` and `/grill-me` / `/architect` / `/retro`.
 
 ---
 
@@ -108,6 +130,9 @@ Before writing any code, let the AI interview you so edge cases (loading states,
 
 - **Claude Code:** `/grill-me Add a "Cancel Order" button on the order detail page`
 - **Antigravity:** `Use the grill-me skill: Add a "Cancel Order" button on the order detail page`
+- **Codex CLI:** `$grill-me Add a "Cancel Order" button on the order detail page`
+- **GitHub Copilot:** `/grill-me Add a "Cancel Order" button on the order detail page`
+- **OpenCode:** `/grill-me Add a "Cancel Order" button on the order detail page`
 
 Answer the AI's questions. At the end, it will save a short plan in `.agents/specs/<feature>.md`.
 
@@ -131,8 +156,26 @@ Then run:
   Delegate coding to @coder and Playwright E2E testing (port :<port>) to @tester.
   ```
 
+- **Codex CLI:**
+  ```text
+  $architect-workflow Implement Slice 1 from .agents/specs/<feature>.md.
+  Delegate coding to @coder and Playwright E2E testing (port :<port>) to @tester.
+  ```
+
+- **GitHub Copilot:**
+  ```text
+  /architect Implement Slice 1 from .agents/specs/<feature>.md.
+  Delegate coding to @coder and Playwright E2E testing (port :<port>) to @tester.
+  ```
+
+- **OpenCode:**
+  ```text
+  /architect Implement Slice 1 from .agents/specs/<feature>.md.
+  Delegate coding to @coder and Playwright E2E testing (port :<port>) to @tester.
+  ```
+
 **What happens behind the scenes:**
-1. `architect` reads `AGENTS.md` / `CLAUDE.md` and writes a strict contract.
+1. `architect` reads `AGENTS.md` / `CLAUDE.md` / `.github/copilot-instructions.md` and writes a strict contract.
 2. `coder` edits the files, runs type-checks/lint, and reports back.
 3. `architect` checks `git diff` to make sure nothing outside scope was touched.
 4. `tester` writes and runs the Playwright test (up to 2 fix cycles if it fails).
@@ -154,6 +197,9 @@ Did the AI make a silly mistake (like importing from the wrong folder or using a
 
 - **Claude Code:** `/retro`
 - **Antigravity:** `Run the retro skill on this session`
+- **Codex CLI:** `$retro`
+- **GitHub Copilot:** `/retro`
+- **OpenCode:** `/retro`
 
 It will propose a 1–2 line update to `AGENTS.md` (or `docs/agents/`) so **everyone on the team** benefits next time.
 
@@ -167,5 +213,5 @@ It will propose a 1–2 line update to `AGENTS.md` (or `docs/agents/`) so **ever
 | **MCP tool shows "Failed"** | Restart your AI assistant completely. |
 | **Figma returns nothing or 403** | Your Figma token expired or lacks read access. Generate a new one and re-run with `--force --figma-key NEW_KEY`. |
 | **`tester` says "connection refused"** | You forgot to start your app's dev server (`npm run dev`) before running `tester`. |
-| **Agents don't appear** | Make sure you opened Claude/Antigravity inside the project root (the folder containing `.claude/` or `.agents/`). |
+| **Agents don't appear** | Make sure you opened your assistant inside the project root (the folder containing `.claude/`, `.agents/`, `.codex/`, `.github/`, or `.opencode/`). |
 | **Pasted Figma key in chat by mistake** | Delete the token in Figma Settings immediately, create a new one, and re-run with `--force --figma-key NEW_KEY`. |

@@ -1,7 +1,7 @@
 {
   "name": "ai-kit",
   "version": "1.0.0",
-  "description": "Team AI workflow setup (Grill-Me, Architect, Coder, Tester, Retro) + MCP for Claude Code and Antigravity CLI",
+  "description": "Team AI workflow setup (Grill-Me, Architect, Coder, Tester, Retro) + MCP for Claude Code, Antigravity CLI, Codex CLI, GitHub Copilot, and OpenCode",
   "type": "module",
   "bin": {
     "ai-kit": "./bin/cli.mjs"
