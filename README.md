@@ -136,6 +136,8 @@ Before writing any code, let the AI interview you so edge cases (loading states,
 
 Answer the AI's questions. At the end, it will save a short plan in `.agents/specs/<feature>.md`.
 
+> **Small or unambiguous task?** You can skip `/grill-me` and go straight to `architect` if the requirements are already crystal clear (e.g., a straightforward bug fix, refactor, or single small slice with no open design questions). Still use `/grill-me`—even on small tasks—when there are unstated edge cases (UI states, error handling, permissions, API shapes) or when starting from a Figma link.
+
 ---
 
 ### Step 4.2 — Build & Verify Slice by Slice (`architect` → `coder` → `tester`)
