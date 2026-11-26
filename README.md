@@ -3,16 +3,17 @@
 Welcome! This guide sets up your AI coding assistant so it writes code that actually matches our codebase, tests its own work, and doesn't waste time guessing.
 
 ### Supported Harnesses
-- **Claude Code** (`.claude/agents/`, `.claude/commands/`)
+- **Claude Code** (`.claude/agents/`, `.claude/commands/`, `.claude/skills/`)
 - **Antigravity CLI** (`.agents/agents/`, `.agents/skills/`)
 - **OpenAI Codex CLI** (`.codex/config.toml`, `.codex/agents/`, `.agents/skills/`)
 - **GitHub Copilot** (`.github/agents/*.agent.md`, `.github/prompts/*.prompt.md`, `.github/skills/`)
 - **OpenCode** (`.opencode/agents/`, `.opencode/commands/`, `.opencode/skills/`)
 
 ### What You Get
-1. **Browser & Design Tools (MCPs — installed once on your laptop):**
-   - **Playwright:** Lets the AI open your running app in a real browser and run E2E tests.
-   - **Figma (optional):** Lets the AI read Figma frames directly from a link.
+1. **Browser, Design & Docs Tools (installed once / via skill):**
+   - **Playwright (MCP):** Lets the AI open your running app in a real browser and run E2E tests.
+   - **Figlens (Offline `.fig` Skill + optional MCP):** Lets the AI read saved local `.fig` files (`File > Save local copy`) directly via `@runkids/figlens` — no Figma account, Dev Mode seat, or API token required.
+   - **Internal Atlassian (`internal-atlassian-mcp`):** Lets the AI read internal Confluence pages (requirements, TSDs, API contracts) using your Atlassian username/password (prompted during `--mcp` install, stored only in your local user MCP config).
 2. **Your AI Team (installed inside each project repo):**
    - **Grill-Me (`/grill-me`):** Asks you clarifying questions *before* coding so the AI doesn't build the wrong thing.
    - **Architect (`architect`):** Reads the repo rules, plans small slices, and checks the final code.
@@ -41,11 +42,6 @@ Make sure you also have at least one assistant installed:
 - **GitHub Copilot** (`copilot --version` or VS Code Copilot), or
 - **OpenCode** (`opencode --version`)
 
-### Optional: Get a Figma Token (only if you build UI from Figma links)
-1. Open Figma → **Settings** → **Security** → **Personal access tokens**.
-2. Click **Generate new token** (read-only is enough) and copy it.
-3. **Never paste this token in chat or commit it to Git.**
-
 ---
 
 ## Step 2: Run the Setup Command
@@ -53,15 +49,14 @@ Make sure you also have at least one assistant installed:
 Open your terminal, `cd` into your project folder, and run **one** of these commands:
 
 ### Option A: Full setup (First time on a new laptop)
-Installs the browser/Figma tools globally + adds the AI team to your current project:
+Installs the Playwright, offline Figlens, and `internal-atlassian-mcp` MCPs globally + adds the AI team & skills to your current project. It will prompt you for your Atlassian/Confluence MCP URL, username, and password (password input is hidden; leave the URL blank to skip `internal-atlassian-mcp`):
 
 ```bash
-npx github:ayubial/ai-kit --figma-key YOUR_FIGMA_KEY
+npx github:ayubial/ai-kit --mcp
 ```
-*(No Figma key? Run `npx github:ayubial/ai-kit --mcp` to install just the Playwright browser tool + project agents.)*
 
-### Option B: Project setup only (You already ran Option A on another project)
-Installs only the AI agents/commands into the current project:
+### Option B: Project setup only (Recommended if you already have MCPs or only want skills)
+Installs the AI agents, commands, and skills (including the `figlens` CLI skill) into the current project:
 
 ```bash
 npx github:ayubial/ai-kit
@@ -74,8 +69,8 @@ By default, `ai-kit` sets up **all** supported assistants (`claude`, `antigravit
 # Antigravity only (project agents + skills)
 npx github:ayubial/ai-kit --target antigravity
 
-# Claude Code only (with MCP + Figma)
-npx github:ayubial/ai-kit --target claude --figma-key YOUR_FIGMA_KEY
+# Claude Code only (with Playwright + Figlens MCP)
+npx github:ayubial/ai-kit --target claude --mcp
 
 # Codex CLI only (project agents + skills)
 npx github:ayubial/ai-kit --target codex
@@ -106,12 +101,12 @@ npx github:ayubial/ai-kit --force
 ## Step 3: Verify Everything Works
 
 1. **Restart** your terminal / AI assistant in the project folder.
-2. **Check MCP tools:**
-   - **Claude Code:** run `claude mcp list` → you should see `playwright` (and `figma-free-context` if you added a key).
-   - **Antigravity:** type `/mcp` → you should see `playwright` (and `figma-free-context`).
-   - **Codex CLI:** run `codex mcp list` (or `/mcp` inside a session) → you should see `playwright` (and `figma-free-context`).
-   - **GitHub Copilot:** type `/mcp` in Copilot CLI (or check `~/.copilot/mcp-config.json`) → you should see `playwright` (and `figma-free-context`).
-   - **OpenCode:** run `opencode mcp list` (or check `~/.config/opencode/opencode.json`) → you should see `playwright` (and `figma-free-context`).
+2. **Check MCP tools (if you ran `--mcp`):**
+   - **Claude Code:** run `claude mcp list` → you should see `playwright`, `figlens`, and `internal-atlassian-mcp`.
+   - **Antigravity:** type `/mcp` → you should see `playwright`, `figlens`, and `internal-atlassian-mcp`.
+   - **Codex CLI:** run `codex mcp list` (or `/mcp` inside a session) → you should see `playwright`, `figlens`, and `internal-atlassian-mcp`.
+   - **GitHub Copilot:** type `/mcp` in Copilot CLI (or check `~/.copilot/mcp-config.json`) → you should see `playwright`, `figlens`, and `internal-atlassian-mcp`.
+   - **OpenCode:** run `opencode mcp list` (or check `~/.config/opencode/opencode.json`) → you should see `playwright`, `figlens`, and `internal-atlassian-mcp`.
 3. **Check Agents:**
    - **Claude Code:** type `/architect` or `/grill-me` inside a session.
    - **Antigravity:** type `@architect`, `@coder`, `@tester`, or `/grill-me`.
@@ -125,18 +120,26 @@ npx github:ayubial/ai-kit --force
 
 > **Golden Rule:** Don't ask the AI to build a huge feature in one giant prompt. Follow the **4-Step Loop** below — it's faster and produces way fewer bugs.
 
-### Step 4.1 — Clarify First (`/grill-me`)
+### Step 4.1 — Clarify First (`grill-me` — Auto-Triggers or Manual)
 Before writing any code, let the AI interview you so edge cases (loading states, errors, API shapes) are clear.
 
-- **Claude Code:** `/grill-me Add a "Cancel Order" button on the order detail page`
-- **Antigravity:** `Use the grill-me skill: Add a "Cancel Order" button on the order detail page`
+`grill-me` **auto-triggers** when you share a Confluence URL, API contract, `.fig` design file, or a feature request with unstated edge cases—or you can invoke it explicitly:
+
+- **Claude Code / GitHub Copilot / OpenCode:** `/grill-me Add a "Cancel Order" button on the order detail page`
+- **Antigravity:** Just paste your feature / Confluence / `.fig` (or say `Use the grill-me skill: ...`)
 - **Codex CLI:** `$grill-me Add a "Cancel Order" button on the order detail page`
-- **GitHub Copilot:** `/grill-me Add a "Cancel Order" button on the order detail page`
-- **OpenCode:** `/grill-me Add a "Cancel Order" button on the order detail page`
+
+| Prompt type | Auto-triggers `grill-me`? | Example |
+| :--- | :--- | :--- |
+| **Confluence URL + `.fig` file** | **Yes** | `Implement this: https://.../wiki/... and .agents/designs/checkout.fig` |
+| **`.fig` design file** | **Yes** | `Build the promo modal from .agents/designs/promo.fig in apps/web` |
+| **New feature with open edge cases** | **Yes** | `Add a "Cancel Order" button on the order detail page` |
+| **Existing spec file** | **No** (goes to `architect`) | `Implement Slice 1 from .agents/specs/cancel-order.md` |
+| **Clear bug fix or small refactor** | **No** (goes to `architect`/`coder`) | `Fix null check on user.phone in src/utils/format.ts line 42` |
 
 Answer the AI's questions. At the end, it will save a short plan in `.agents/specs/<feature>.md`.
 
-> **Small or unambiguous task?** You can skip `/grill-me` and go straight to `architect` if the requirements are already crystal clear (e.g., a straightforward bug fix, refactor, or single small slice with no open design questions). Still use `/grill-me`—even on small tasks—when there are unstated edge cases (UI states, error handling, permissions, API shapes) or when starting from a Figma link.
+> **Small or unambiguous task?** You can skip `/grill-me` and go straight to `architect` if the requirements are already crystal clear (e.g., a straightforward bug fix, refactor, or single small slice with no open design questions). Still use `/grill-me`—even on small tasks—when there are unstated edge cases (UI states, error handling, permissions, API shapes) or when starting from a `.fig` design or Confluence link.
 
 ---
 
@@ -184,13 +187,17 @@ Then run:
 
 ---
 
-### Step 4.3 — Build UI from a Figma Link (Optional)
-1. In Figma, right-click the frame → **Copy link to selection**.
-2. Ask your assistant:
+### Step 4.3 — Start from Confluence & Offline Figma (`.fig`) (Optional)
+1. In Figma, click **File → Save local copy...** and save the `.fig` file locally (e.g. `.agents/designs/feature.fig`, and add `*.fig` to `.gitignore` so large binary files aren't committed).
+2. Pass your Confluence requirement/API contract URLs and `.fig` path directly in chat (`grill-me` auto-triggers on Confluence URLs / `.fig` files, or you can invoke `/grill-me` / `$grill-me` explicitly):
    ```text
-   /grill-me Build this Figma design in <target-path>: <paste Figma link>
+   /grill-me
+   Requirement: <Confluence URL>
+   API Contract: <Confluence URL>
+   Design: .agents/designs/feature.fig (Frame: <frame name or node-id>)
+   Target: <target-path>
    ```
-   Then hand the resulting spec to `architect`.
+   The assistant will fetch the Confluence docs (if Confluence MCP is configured), inspect the `.fig` file offline via `figlens`, cross-check against the codebase, ask only about unresolved gaps, and save `.agents/specs/<feature>.md` for `architect`.
 
 ---
 
@@ -213,7 +220,6 @@ It will propose a 1–2 line update to `AGENTS.md` (or `docs/agents/`) so **ever
 | :--- | :--- |
 | **`npx` asks to install or hangs** | Check you are on Node >= 20 (`node -v`) and connected to your office VPN/proxy if required. |
 | **MCP tool shows "Failed"** | Restart your AI assistant completely. |
-| **Figma returns nothing or 403** | Your Figma token expired or lacks read access. Generate a new one and re-run with `--force --figma-key NEW_KEY`. |
+| **`figlens` can't find a frame or `.fig` file** | Verify the `.fig` path exists (exported via Figma **File → Save local copy...**) and run `npx @runkids/figlens tree <file.fig> --depth 2`. |
 | **`tester` says "connection refused"** | You forgot to start your app's dev server (`npm run dev`) before running `tester`. |
 | **Agents don't appear** | Make sure you opened your assistant inside the project root (the folder containing `.claude/`, `.agents/`, `.codex/`, `.github/`, or `.opencode/`). |
-| **Pasted Figma key in chat by mistake** | Delete the token in Figma Settings immediately, create a new one, and re-run with `--force --figma-key NEW_KEY`. |

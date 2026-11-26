@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import readline from "node:readline/promises";
 import { execFileSync } from "node:child_process";
 
 const args = process.argv.slice(2);
@@ -11,7 +12,9 @@ const VALID_TARGETS = ["claude", "antigravity", "codex", "copilot", "opencode"];
 const opts = {
   target: "all", // claude | antigravity | codex | copilot | opencode | all (or comma-separated)
   dir: ".",
-  figmaKey: "",
+  atlassianUrl: "",
+  atlassianUser: "",
+  atlassianPass: "",
   runMcp: false,
   runAgents: true,
   force: false,
@@ -26,23 +29,25 @@ Usage:
   npx github:ayubial/ai-kit [options]
 
 Options:
-  --target <targets>  Assistant(s) to configure: claude, antigravity, codex, copilot, opencode, or all (default: all)
-                      Supports comma-separated values (e.g. --target codex,copilot)
-  --dir <path>        Target project directory (default: .)
-  --figma-key <key>   Figma token (enables Playwright + Figma MCP)
-  --mcp               Also configure MCP servers (Playwright, + Figma if key given)
-  --mcp-only          Only configure MCP servers (skip project files)
-  --agents-only       Only install project agents/skills (skip MCP)
-  --force             Overwrite existing files and replace MCP servers
-  --dry-run           Preview changes without writing files
-  -h, --help          Show this help message
+  --target <targets>       Assistant(s) to configure: claude, antigravity, codex, copilot, opencode, or all (default: all)
+                           Supports comma-separated values (e.g. --target codex,copilot)
+  --dir <path>             Target project directory (default: .)
+  --mcp                    Also configure MCP servers (Playwright, offline Figlens, + internal-atlassian-mcp)
+  --mcp-only               Only configure MCP servers (skip project files)
+  --agents-only            Only install project agents/skills (skip MCP)
+  --atlassian-url <url>    Atlassian/Confluence MCP URL (prompts interactively if omitted with --mcp)
+  --atlassian-user <user>  Atlassian/Confluence username (prompts interactively if omitted with --mcp)
+  --atlassian-pass <pass>  Atlassian/Confluence password (prompts interactively with masked input if omitted)
+  --force                  Overwrite existing files and replace MCP servers
+  --dry-run                Preview changes without writing files
+  -h, --help               Show this help message
 
 Examples:
-  # Install project agents + skills in current repo
+  # Install project agents + skills in current repo (includes offline figlens skill)
   npx github:ayubial/ai-kit
 
-  # Full setup (user-global MCP + project-local agents/skills)
-  npx github:ayubial/ai-kit --figma-key YOUR_FIGMA_KEY
+  # Full setup (prompts for Atlassian MCP URL and credentials for internal-atlassian-mcp)
+  npx github:ayubial/ai-kit --mcp
 
   # Preview what will be installed
   npx github:ayubial/ai-kit --dry-run
@@ -58,9 +63,12 @@ for (let i = 0; i < args.length; i++) {
     opts.target = args[++i] ?? "";
   } else if (a === "--dir") {
     opts.dir = args[++i] ?? "";
-  } else if (a === "--figma-key") {
-    opts.figmaKey = args[++i] ?? "";
-    opts.runMcp = true;
+  } else if (a === "--atlassian-url") {
+    opts.atlassianUrl = args[++i] ?? "";
+  } else if (a === "--atlassian-user") {
+    opts.atlassianUser = args[++i] ?? "";
+  } else if (a === "--atlassian-pass") {
+    opts.atlassianPass = args[++i] ?? "";
   } else if (a === "--mcp") {
     opts.runMcp = true;
   } else if (a === "--mcp-only") {
@@ -129,12 +137,90 @@ function commandExists(cmd) {
   }
 }
 
-function setupMcpViaCli({ label, cmd, removeArgs, addPrefixArgs }) {
+function promptHidden(question) {
+  return new Promise((resolve) => {
+    process.stdout.write(question);
+    const stdin = process.stdin;
+    const wasRaw = stdin.isRaw;
+    if (stdin.isTTY) stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding("utf8");
+
+    let value = "";
+    const onData = (ch) => {
+      if (ch === "\r" || ch === "\n" || ch === "\u0004") {
+        if (stdin.isTTY) stdin.setRawMode(Boolean(wasRaw));
+        stdin.pause();
+        stdin.removeListener("data", onData);
+        process.stdout.write("\n");
+        resolve(value);
+      } else if (ch === "\u0003") {
+        if (stdin.isTTY) stdin.setRawMode(Boolean(wasRaw));
+        process.stdout.write("\n");
+        process.exit(130);
+      } else if (ch === "\u007f" || ch === "\b") {
+        value = value.slice(0, -1);
+      } else {
+        value += ch;
+      }
+    };
+    stdin.on("data", onData);
+  });
+}
+
+async function resolveAtlassianMcpConfig() {
+  let url = opts.atlassianUrl;
+  let user = opts.atlassianUser;
+  let pass = opts.atlassianPass;
+
+  if ((!url || !user || !pass) && !opts.dryRun && process.stdin.isTTY) {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      if (!url) {
+        url = (
+          await rl.question(
+            "Atlassian/Confluence MCP URL (leave blank to skip internal-atlassian-mcp): "
+          )
+        ).trim();
+      }
+      if (url && !user) {
+        user = (await rl.question("Atlassian/Confluence username: ")).trim();
+      }
+    } finally {
+      rl.close();
+    }
+    if (url && user && !pass) {
+      pass = await promptHidden("Atlassian/Confluence password: ");
+    }
+  }
+
+  if (!url || !user || !pass) {
+    return null;
+  }
+  const token = Buffer.from(`${user}:${pass}`, "utf8").toString("base64");
+  return { url, authHeader: `Basic ${token}` };
+}
+
+function getAtlassianMcpArgs(atlassianUrl) {
+  return [
+    "npx",
+    "-y",
+    "mcp-remote",
+    atlassianUrl,
+    "--allow-http",
+    "--transport",
+    "http-only",
+    "--header",
+    "Authorization:${AUTH_HEADER}",
+  ];
+}
+
+function setupMcpViaCli({ label, cmd, removeArgs, addPrefixArgs, envFlag, atlassianConfig }) {
   if (!commandExists(cmd)) {
     console.log(`${label} CLI ('${cmd}') not found — skipping ${label} MCP.`);
     return;
   }
-  const addServer = (name, cmdArgs) => {
+  const addServer = (name, cmdArgs, envVars = {}) => {
     let exists = false;
     try {
       execFileSync(cmd, ["mcp", "get", name], { stdio: "ignore" });
@@ -151,37 +237,57 @@ function setupMcpViaCli({ label, cmd, removeArgs, addPrefixArgs }) {
     try {
       execFileSync(cmd, [...removeArgs, name], { stdio: "ignore" });
     } catch {}
-    execFileSync(cmd, [...addPrefixArgs, name, "--", ...cmdArgs], { stdio: "inherit" });
+    const envArgs = Object.entries(envVars).flatMap(([k, v]) => [envFlag, `${k}=${v}`]);
+    execFileSync(cmd, [...addPrefixArgs, name, ...envArgs, "--", ...cmdArgs], {
+      stdio: "inherit",
+    });
   };
 
   addServer("playwright", ["npx", "-y", "@playwright/mcp@latest"]);
-  if (opts.figmaKey) {
-    addServer("figma-free-context", [
-      "npx",
-      "-y",
-      "figma-developer-mcp",
-      `--figma-api-key=${opts.figmaKey}`,
-      "--stdio",
-    ]);
+  addServer("figlens", ["npx", "-y", "@runkids/figlens", "mcp"]);
+  if (atlassianConfig) {
+    addServer("internal-atlassian-mcp", getAtlassianMcpArgs(atlassianConfig.url), {
+      AUTH_HEADER: atlassianConfig.authHeader,
+    });
   } else {
-    console.log(`${label} MCP: figma-free-context skipped (pass --figma-key to enable)`);
+    console.log(
+      `${label} MCP: internal-atlassian-mcp skipped (no Atlassian URL/credentials provided)`
+    );
+  }
+
+  let hasLegacyFigma = false;
+  try {
+    execFileSync(cmd, ["mcp", "get", "figma-free-context"], { stdio: "ignore" });
+    hasLegacyFigma = true;
+  } catch {}
+  if (hasLegacyFigma) {
+    if (opts.dryRun) {
+      console.log(`[dry-run] Would remove legacy ${label} MCP: figma-free-context`);
+    } else {
+      try {
+        execFileSync(cmd, [...removeArgs, "figma-free-context"], { stdio: "ignore" });
+        console.log(`${label} MCP: removed legacy figma-free-context`);
+      } catch {}
+    }
   }
 }
 
-function setupMcpJsonConfig({ label, cfgPath, rootKey = "mcpServers", buildServer }) {
+function setupMcpJsonConfig({ label, cfgPath, rootKey = "mcpServers", buildServer, atlassianConfig }) {
   const data = fs.existsSync(cfgPath) ? JSON.parse(fs.readFileSync(cfgPath, "utf8")) : {};
   data[rootKey] = data[rootKey] || {};
 
   const want = {
     playwright: buildServer(["npx", "-y", "@playwright/mcp@latest"], true),
+    figlens: buildServer(["npx", "-y", "@runkids/figlens", "mcp"], false),
   };
-  if (opts.figmaKey) {
-    want["figma-free-context"] = buildServer(
-      ["npx", "-y", "figma-developer-mcp", `--figma-api-key=${opts.figmaKey}`, "--stdio"],
-      false
-    );
+  if (atlassianConfig) {
+    want["internal-atlassian-mcp"] = buildServer(getAtlassianMcpArgs(atlassianConfig.url), false, {
+      AUTH_HEADER: atlassianConfig.authHeader,
+    });
   } else {
-    console.log(`${label} MCP: figma-free-context skipped (pass --figma-key to enable)`);
+    console.log(
+      `${label} MCP: internal-atlassian-mcp skipped (no Atlassian URL/credentials provided)`
+    );
   }
 
   for (const [name, conf] of Object.entries(want)) {
@@ -195,6 +301,15 @@ function setupMcpJsonConfig({ label, cfgPath, rootKey = "mcpServers", buildServe
     }
   }
 
+  if ("figma-free-context" in data[rootKey]) {
+    if (opts.dryRun) {
+      console.log(`[dry-run] Would remove legacy ${label} MCP: figma-free-context`);
+    } else {
+      delete data[rootKey]["figma-free-context"];
+      console.log(`${label} MCP: removed legacy figma-free-context`);
+    }
+  }
+
   if (!opts.dryRun) {
     fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
     fs.writeFileSync(cfgPath, JSON.stringify(data, null, 2), "utf8");
@@ -203,57 +318,67 @@ function setupMcpJsonConfig({ label, cfgPath, rootKey = "mcpServers", buildServe
   }
 }
 
-function setupMcpClaude() {
+function setupMcpClaude(atlassianConfig) {
   setupMcpViaCli({
     label: "Claude",
     cmd: "claude",
     removeArgs: ["mcp", "remove", "-s", "user"],
     addPrefixArgs: ["mcp", "add", "-s", "user"],
+    envFlag: "-e",
+    atlassianConfig,
   });
 }
 
-function setupMcpCodex() {
+function setupMcpCodex(atlassianConfig) {
   setupMcpViaCli({
     label: "Codex",
     cmd: "codex",
     removeArgs: ["mcp", "remove"],
     addPrefixArgs: ["mcp", "add"],
+    envFlag: "--env",
+    atlassianConfig,
   });
 }
 
-function setupMcpAntigravity() {
+function setupMcpAntigravity(atlassianConfig) {
   setupMcpJsonConfig({
     label: "Antigravity",
     cfgPath: path.join(os.homedir(), ".gemini", "config", "mcp_config.json"),
-    buildServer: ([command, ...args], isPlaywright) => ({
+    atlassianConfig,
+    buildServer: ([command, ...args], isPlaywright, envVars) => ({
       command,
       args,
+      ...(envVars ? { env: envVars } : {}),
       ...(isPlaywright ? { disabled: false } : {}),
     }),
   });
 }
 
-function setupMcpCopilot() {
+function setupMcpCopilot(atlassianConfig) {
   setupMcpJsonConfig({
     label: "Copilot",
     cfgPath: path.join(os.homedir(), ".copilot", "mcp-config.json"),
-    buildServer: ([command, ...args]) => ({
+    atlassianConfig,
+    buildServer: ([command, ...args], _isPlaywright, envVars) => ({
       type: "local",
       command,
       args,
+      ...(envVars ? { env: envVars } : {}),
       tools: ["*"],
     }),
   });
 }
 
-function setupMcpOpencode() {
+function setupMcpOpencode(atlassianConfig) {
   setupMcpJsonConfig({
     label: "OpenCode",
     cfgPath: path.join(os.homedir(), ".config", "opencode", "opencode.json"),
     rootKey: "mcp",
-    buildServer: (command) => ({
+    atlassianConfig,
+    buildServer: (command, _isPlaywright, envVars) => ({
       type: "local",
       command,
+      ...(envVars ? { environment: envVars } : {}),
       enabled: true,
     }),
   });
@@ -335,21 +460,60 @@ You are the Lead Automation Tester. Write and execute deterministic Playwright E
 const GRILL_ME_BODY = `
 # Grill-Me: Pre-Coding Alignment & Vertical-Slice Spec
 
-Do NOT write application code yet. Your job is to interview the user relentlessly until every requirement, edge case, API contract, and UI state is crystal clear, then save a concise vertical-slice spec.
+Do NOT write application code yet. Your job is to ingest all provided context (feature idea, Confluence/doc links, offline \`.fig\` design files), spot gaps or contradictions against the codebase, interview the user only on what is still unclear, and save a concise vertical-slice spec.
 
 ## Process
 
-1. Read \`AGENTS.md\` / \`CLAUDE.md\` / \`.github/copilot-instructions.md\` and inspect the target area briefly to understand existing patterns.
-2. Ask focused questions (in batches of 3–5, numbered) covering:
-   - Exact user flow and acceptance criteria
-   - Edge cases (empty, loading, error, unauthorized, mobile vs desktop)
-   - Data/API contract and shared-module impact
-   - Verification expectations (type-check, E2E route/port)
-3. Once all unknowns are resolved, write a short Markdown spec to \`.agents/specs/<kebab-feature-name>.md\` containing:
-   - Goal & non-goals
-   - Vertical slices (each slice = smallest end-to-end testable increment)
-   - Exact acceptance criteria per slice
-4. Tell the user the spec path and suggest running \`architect\` on Slice 1.
+1. **Ingest Context & Inspect Codebase:**
+   - Read \`AGENTS.md\` / \`CLAUDE.md\` / \`.github/copilot-instructions.md\` and inspect the target area briefly to understand existing patterns.
+   - **If Confluence / doc URLs or local TSD paths are provided:** Fetch/read them (via available Confluence/Atlassian MCP or file tools) and extract user flows, acceptance criteria, API endpoints, request/response schemas, error codes, and auth/permission rules.
+   - **If a local \`.fig\` file is provided:** Inspect it offline using \`figlens\` (prefer \`npx @runkids/figlens\` CLI commands or the \`figlens\` MCP if configured):
+     - \`npx @runkids/figlens tree <file.fig> --depth 2\` or \`npx @runkids/figlens find <file.fig> "<frame>" --type FRAME\` to locate target frame node IDs.
+     - \`npx @runkids/figlens nodes <file.fig> <nodeId>\` to extract layout structure, typography, spacing, tokens, UI copy, states (empty, loading, error, mobile vs desktop), and reusable components.
+     - If a Figma cloud URL is pasted instead of a \`.fig\` file, ask the user to export a local copy (\`File > Save local copy\`) as \`.fig\` and provide the path.
+   - **Cross-check:** Compare the requirements, API contract, and Figma design against the existing codebase to identify gaps, mismatches, or missing states.
+   - *(If an external link cannot be fetched due to a missing MCP or auth error, tell the user briefly and ask them to paste the relevant section or continue with what is available.)*
+2. **Targeted Interview (Gaps Only):**
+   - Do NOT re-ask anything already answered by Confluence, the \`.fig\` design, or the codebase.
+   - Ask focused questions (in batches of 3–5, numbered) covering only unresolved gaps or contradictions:
+     - Unclear user flows or acceptance criteria
+     - Missing edge cases (empty, loading, error, unauthorized, mobile vs desktop)
+     - API contract mismatches, error handling, and shared-module impact
+     - Verification expectations (type-check, unit/E2E route/port)
+3. **Write Vertical-Slice Spec:**
+   - Once all unknowns are resolved, write a short Markdown spec to \`.agents/specs/<kebab-feature-name>.md\` containing:
+     - Goal & non-goals
+     - Source references (Confluence links, \`.fig\` file + frame/node IDs, if provided) & API contract summary
+     - Vertical slices (each slice = smallest end-to-end testable increment)
+     - Exact acceptance criteria per slice
+4. **Handoff:** Tell the user the spec path and suggest running \`architect\` on Slice 1.
+`;
+
+const FIGLENS_BODY = `
+# Figlens: Offline Figma (.fig) Inspection
+
+Read local \`.fig\` files (exported via Figma \`File > Save local copy\`) completely offline without a Figma account, Dev Mode seat, or API token.
+
+## Commands
+
+\`\`\`bash
+# 1. Browse pages and frames to find node IDs
+npx @runkids/figlens tree <file.fig> --depth 2
+
+# 2. Search frames by name
+npx @runkids/figlens find <file.fig> "<query>" --type FRAME
+
+# 3. Inspect exact layout, typography, colors, copy, and tokens for a node
+npx @runkids/figlens nodes <file.fig> <nodeId>
+
+# 4. Export a reference PNG or SVG asset
+npx @runkids/figlens export <file.fig> <nodeId> <output.png|output.svg>
+\`\`\`
+
+## Guidelines
+
+- Always inspect \`nodes\` before implementing UI so spacing, typography, tokens, and copy match the design.
+- Keep \`.fig\` files out of Git (add \`*.fig\` to \`.gitignore\`).
 `;
 
 const RETRO_BODY = `
@@ -371,7 +535,7 @@ Review the current session's changes (\`git diff\`, \`git status\`) and any bugs
 function installSkillsAt(skillsBaseDir, architectInstructionsHint) {
   writeTemplate(`${skillsBaseDir}/grill-me/SKILL.md`, `---
 name: grill-me
-description: Interview the developer before coding to resolve edge cases and produce a vertical-slice spec in .agents/specs/.
+description: Use automatically before coding whenever the user provides a Confluence URL, API contract, TSD, .fig design file, or a feature request with unstated edge cases. Interviews the developer on gaps only and produces a vertical-slice spec in .agents/specs/.
 ---
 ${GRILL_ME_BODY}`);
 
@@ -387,6 +551,12 @@ name: retro
 description: Run a quick post-task retrospective and update AGENTS.md or docs/agents/ with repeatable lessons.
 ---
 ${RETRO_BODY}`);
+
+  writeTemplate(`${skillsBaseDir}/figlens/SKILL.md`, `---
+name: figlens
+description: Inspect offline Figma (.fig) files locally via @runkids/figlens without a Figma account or API key.
+---
+${FIGLENS_BODY}`);
 }
 
 function installAntigravityAgents() {
@@ -610,7 +780,7 @@ ${TESTER_BODY}`);
 
   writeTemplate(`${base}/commands/grill-me.md`, `---
 description: Interview me on requirements and edge cases before coding, then write a vertical-slice spec
-argument-hint: <feature idea or path to TSD>
+argument-hint: <feature idea, Confluence URL, .fig path, or path to TSD>
 model: opus
 effort: medium
 ---
@@ -636,37 +806,47 @@ model: sonnet
 effort: low
 ---
 ${RETRO_BODY}`);
+
+  installSkillsAt(
+    `${base}/skills`,
+    "Follow `.claude/agents/architect.md` as your instructions for this task."
+  );
 }
 
 // ============================================================================
 // Execute
 // ============================================================================
 
-if (opts.runMcp) {
-  if (hasTarget("claude")) setupMcpClaude();
-  if (hasTarget("antigravity")) setupMcpAntigravity();
-  if (hasTarget("codex")) setupMcpCodex();
-  if (hasTarget("copilot")) setupMcpCopilot();
-  if (hasTarget("opencode")) setupMcpOpencode();
-}
+async function main() {
+  if (opts.runMcp) {
+    const atlassianConfig = await resolveAtlassianMcpConfig();
+    if (hasTarget("claude")) setupMcpClaude(atlassianConfig);
+    if (hasTarget("antigravity")) setupMcpAntigravity(atlassianConfig);
+    if (hasTarget("codex")) setupMcpCodex(atlassianConfig);
+    if (hasTarget("copilot")) setupMcpCopilot(atlassianConfig);
+    if (hasTarget("opencode")) setupMcpOpencode(atlassianConfig);
+  }
 
-if (opts.runAgents) {
-  if (hasTarget("antigravity")) installAntigravityAgents();
-  if (hasTarget("codex")) installCodexAgents();
-  if (hasTarget("antigravity") || hasTarget("codex")) {
-    installSkillsAt(
-      ".agents/skills",
-      "Follow `.agents/agents/architect/agent.md` (Antigravity) or `.codex/agents/architect.toml` (Codex) as your instructions for this task."
+  if (opts.runAgents) {
+    if (hasTarget("antigravity")) installAntigravityAgents();
+    if (hasTarget("codex")) installCodexAgents();
+    if (hasTarget("antigravity") || hasTarget("codex")) {
+      installSkillsAt(
+        ".agents/skills",
+        "Follow `.agents/agents/architect/agent.md` (Antigravity) or `.codex/agents/architect.toml` (Codex) as your instructions for this task."
+      );
+    }
+    if (hasTarget("claude")) installClaudeAgents();
+    if (hasTarget("copilot")) installCopilotAgents();
+    if (hasTarget("opencode")) installOpencodeAgents();
+  }
+
+  console.log("\nDone.");
+  if (opts.runMcp && !opts.dryRun) {
+    console.log(
+      "Restart your AI assistant, then verify MCP with: claude mcp list (Claude), /mcp (Antigravity/Copilot), codex mcp list (Codex), or opencode mcp list (OpenCode)."
     );
   }
-  if (hasTarget("claude")) installClaudeAgents();
-  if (hasTarget("copilot")) installCopilotAgents();
-  if (hasTarget("opencode")) installOpencodeAgents();
 }
 
-console.log("\nDone.");
-if (opts.runMcp && !opts.dryRun) {
-  console.log(
-    "Restart your AI assistant, then verify MCP with: claude mcp list (Claude), /mcp (Antigravity/Copilot), codex mcp list (Codex), or opencode mcp list (OpenCode)."
-  );
-}
+await main();
