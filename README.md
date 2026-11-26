@@ -53,7 +53,11 @@ Installs the Playwright, offline Figlens, and `internal-atlassian-mcp` MCPs glob
 
 ```bash
 npx github:ayubial/ai-kit --mcp
+
+# Or pre-fill the MCP URL via flag (will still prompt securely for username/password)
+npx github:ayubial/ai-kit --mcp --atlassian-url https://your-internal-host/mcp-atlassian/mcp
 ```
+*(For CI/non-interactive use, `--atlassian-user` and `--atlassian-pass` are also supported, though interactive prompts are recommended so passwords don't stay in shell history.)*
 
 ### Option B: Project setup only (Recommended if you already have MCPs or only want skills)
 Installs the AI agents, commands, and skills (including the `figlens` CLI skill) into the current project:
